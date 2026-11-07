@@ -14,5 +14,6 @@ setup(
     maintainer_email="wang.tianye2@northeastern.edu",
     description="Stretch delivery project scaffold",
     license="TODO",
-    entry_points={"console_scripts": ["status = study_delivery.status_node:main"]},
+    entry_points={"console_scripts": ["status = study_delivery.status_node:main",
+        "hand_raise = study_delivery.hand_raise_node:main"]},
 )
