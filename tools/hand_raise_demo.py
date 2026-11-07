@@ -20,9 +20,16 @@ def main():
                 frame, verbose=False, save=False, save_txt=False, save_crop=False
             )[0]
             annotated_frame = result.plot()  
+
             # first version lets only detect one person to prevent overlap
+            # will show this when not detecting, detecting mutiple or keypoints unclear
             status = "SHOW ONE PERSON AND BOTH WRISTS"
-            color = (0, 200, 255)
+            color = (0, 200, 255) # opencv -> BGR
+
+            # result is this frame's yolo detection, 
+            # the first selection checks there are keypoints,
+            # second selection check if these belong to the same person.
+            # * len(result.keypoints) is number of people not keypoints here.
             if result.keypoints is not None and len(result.keypoints) == 1:
                 points = result.keypoints.xy[0].cpu().numpy()
                 confidence = result.keypoints.conf
