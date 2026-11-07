@@ -14,6 +14,21 @@ class DeliveryDialogue(Node):
 
     def on_request(self, message):
         self.get_logger().info(f"Received delivery request: {message.data}")
+        if ask_yes_no("Would you like me to deliver an item?"):
+            self.get_logger().info("[INTENT CONFIRMED] User wants to deliver an item.")
+        else:
+            self.get_logger().info("[CANCELLED] Delivery request declined.")
+
+
+def ask_yes_no(question):
+    # omit the blank spaces and cases, repeat the same question
+    while True:
+        answer = input(f"{question} [yes/no] ").strip().lower()
+        if answer in ("yes", "y"):
+            return True
+        if answer in ("no", "n"):
+            return False
+        print("Please enter yes or no.")
 
 
 def main(args=None):
@@ -21,7 +36,7 @@ def main(args=None):
     node = DeliveryDialogue()
     try:
         rclpy.spin(node)
-    except (KeyboardInterrupt, ExternalShutdownException):
+    except (KeyboardInterrupt, EOFError, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
