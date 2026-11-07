@@ -55,10 +55,20 @@ def main():
                     margin = frame.shape[0] * 0.04
                     # COCO key points：left shoulder 5, right shoulder 6, left wrist 9, right wrist 10
                     for shoulder, wrist in ((5, 9), (6, 10)):
+
+                        # for now wrist and shoulders values must be at least 0.5
+                        # we could change later if hard to detect
                         if scores[shoulder] >= 0.5 and scores[wrist] >= 0.5:
                             visible_arms += 1
+
+                            # get the y coord (0 is x), 
+                            # upper-left is origin, so lower in the image higher y
                             if points[wrist, 1] < points[shoulder, 1] - margin:
+
+                                # one side satisfies
                                 raised = True
+                    
+                    # checked both sides, show the detection
                     if raised:
                         status, color = "HAND RAISED", (0, 255, 0)
                     elif visible_arms == 2:
