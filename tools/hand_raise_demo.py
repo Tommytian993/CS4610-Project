@@ -1,10 +1,16 @@
+import time 
+
 import cv2
 from ultralytics import YOLO
 
 
 def main():
     model = YOLO("yolo11n-pose.pt")  # human pose model
-    camera = cv2.VideoCapture(0)  # 0 for default camer
+    camera = cv2.VideoCapture(0)  # 0 for default camera
+    raised_since = None  
+    lowered_since = None 
+    triggered = False  # locked in until both hands are down
+    request_count = 0  
     try:
         if not camera.isOpened():
             raise RuntimeError("Cannot open camera. Please check permissions.")
@@ -25,6 +31,8 @@ def main():
             # will show this when not detecting, detecting mutiple or keypoints unclear
             status = "SHOW ONE PERSON AND BOTH WRISTS"
             color = (0, 200, 255) # opencv -> BGR
+            observation = None  # None for unclear (not hands down)
+            now = time.monotonic()
 
             # result is this frame's yolo detection, 
             # the first selection checks there are keypoints,
@@ -70,10 +78,40 @@ def main():
                     
                     # checked both sides, show the detection
                     if raised:
-                        status, color = "HAND RAISED", (0, 255, 0)
+                        observation = True  # at least one hand raised
                     elif visible_arms == 2:
-                        status, color = "HANDS DOWN", (255, 255, 255)
+                        observation = False  # clear on both sides, but not raised
 
+            # turn frame detection into one request
+            if observation is True:
+                lowered_since = None
+                if triggered:
+                    status, color = "REQUEST SENT - LOWER BOTH HANDS", (0, 255, 0)
+                else:
+                    if raised_since is None:
+                        raised_since = now
+                    elapsed = now - raised_since
+                    status = f"RAISING: {min(elapsed, 1.0):.1f}/1.0s"
+                    if elapsed >= 1.0:  # need to maintain raised for at least one second to trigger
+                        triggered = True
+                        request_count += 1
+                        status, color = "REQUEST SENT", (0, 255, 0)
+                        print(f"[Request {request_count}] Would you like me to deliver an item?",
+                              flush=True)
+            elif observation is False:
+                raised_since = None
+                if lowered_since is None:
+                    lowered_since = now
+                if now - lowered_since >= 0.5:  # release after both hands lowered for more than a second
+                    triggered = False
+                status = "LOWER BOTH HANDS TO RESET" if triggered else "IDLE - RAISE A HAND"
+            else:
+                # stop counting when unclear, no one or multiple people in sight
+                raised_since = None
+                lowered_since = None
+
+            cv2.putText(annotated_frame, f"Requests: {request_count}", (20, 65),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
             cv2.putText(annotated_frame, status, (20, 35),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2)
             cv2.imshow("Hand Raise Demo", annotated_frame)
