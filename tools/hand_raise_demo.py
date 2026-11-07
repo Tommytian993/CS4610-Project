@@ -31,12 +31,27 @@ def main():
             # second selection check if these belong to the same person.
             # * len(result.keypoints) is number of people not keypoints here.
             if result.keypoints is not None and len(result.keypoints) == 1:
+
+                # xy saves each person's keypoint pixels, we only need the first at index zero
+                # turn it into a numpy array of 17 (keypoints) by 2 (x,y coords).
                 points = result.keypoints.xy[0].cpu().numpy()
+
+                # confidence about the keypoint's placement
                 confidence = result.keypoints.conf
+
                 if confidence is not None:
+
+                    # keypoint confidence array
                     scores = confidence[0].cpu().numpy()
+
+                    # assume no hand raised
                     raised = False
+
+                    # visible sides of arm and wrist, could be 0,1,2
                     visible_arms = 0
+
+                    # frame.shape is the height in pixels,
+                    # this is how much wrist must be higher than shoulder for the detection
                     margin = frame.shape[0] * 0.04
                     # COCO key points：left shoulder 5, right shoulder 6, left wrist 9, right wrist 10
                     for shoulder, wrist in ((5, 9), (6, 10)):
