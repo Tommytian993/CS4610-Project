@@ -16,6 +16,8 @@ class DeliveryDialogue(Node):
         self.get_logger().info(f"Received delivery request: {message.data}")
         if ask_yes_no("Would you like me to deliver an item?"):
             self.get_logger().info("[INTENT CONFIRMED] User wants to deliver an item.")
+            recipient = ask_recipient()
+            self.get_logger().info(f'[REQUEST CONFIRMED] {message.data}: "{recipient}"')
         else:
             self.get_logger().info("[CANCELLED] Delivery request declined.")
 
@@ -29,6 +31,18 @@ def ask_yes_no(question):
         if answer in ("no", "n"):
             return False
         print("Please enter yes or no.")
+
+
+def ask_recipient():
+    while True:
+        description = input("Who should I deliver it to? ").strip()
+        if not description:
+            print("Please enter a recipient description.")
+            continue
+
+        # repeat recipient description or go back to the question
+        if ask_yes_no(f'Deliver to "{description}". Is that correct?'):
+            return description
 
 
 def main(args=None):
