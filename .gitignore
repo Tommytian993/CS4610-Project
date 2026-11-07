@@ -1,0 +1,11 @@
+/src/stretch_ros2/
+/src/stretch_mujoco/
+/build/
+/install/
+/log/
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.DS_Store
+*.pt
