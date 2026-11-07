@@ -1,5 +1,8 @@
+from queue import Empty, Queue
+from threading import Event, Thread
+
 import rclpy
-from rclpy.executors import ExternalShutdownException
+from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String
 
@@ -7,17 +10,27 @@ from std_msgs.msg import String
 class DeliveryDialogue(Node):
     def __init__(self):
         super().__init__("delivery_dialogue")
+        self.busy = Event()  # ROS 回调和终端主线程共享的忙碌标记。
+        self.pending_request = Queue(maxsize=1)  # 只把当前请求交给主线程。
         self.subscription = self.create_subscription(
             String, "/delivery/request", self.on_request, 10
         )
-        self.get_logger().info("Waiting for a hand-raise request.")
+        self.get_logger().info("[IDLE] Waiting for a hand-raise request.")
 
     def on_request(self, message):
-        self.get_logger().info(f"Received delivery request: {message.data}")
+        if self.busy.is_set():
+            self.get_logger().info(f"[BUSY] Ignoring delivery request: {message.data}")
+            return
+
+        self.busy.set()
+        self.pending_request.put_nowait(message.data)
+
+    def run_dialogue(self, request):
+        self.get_logger().info(f"[BUSY] Handling delivery request: {request}")
         if ask_yes_no("Would you like me to deliver an item?"):
             self.get_logger().info("[INTENT CONFIRMED] User wants to deliver an item.")
             recipient = ask_recipient()
-            self.get_logger().info(f'[REQUEST CONFIRMED] {message.data}: "{recipient}"')
+            self.get_logger().info(f'[REQUEST CONFIRMED] {request}: "{recipient}"')
         else:
             self.get_logger().info("[CANCELLED] Delivery request declined.")
 
@@ -48,11 +61,33 @@ def ask_recipient():
 def main(args=None):
     rclpy.init(args=args)
     node = DeliveryDialogue()
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+
+    def spin():
+        try:
+            executor.spin()
+        except ExternalShutdownException:
+            pass
+
+    ros_thread = Thread(target=spin)
+    ros_thread.start()
     try:
-        rclpy.spin(node)
-    except (KeyboardInterrupt, EOFError, ExternalShutdownException):
+        while rclpy.ok():
+            try:
+                request = node.pending_request.get(timeout=0.2)
+            except Empty:
+                continue
+            try:
+                node.run_dialogue(request)
+            finally:
+                node.busy.clear()
+            node.get_logger().info("[IDLE] Waiting for a hand-raise request.")
+    except (KeyboardInterrupt, EOFError):
         pass
     finally:
+        executor.shutdown()
+        ros_thread.join()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
