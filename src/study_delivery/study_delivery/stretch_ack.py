@@ -31,8 +31,21 @@ class StretchAcknowledgment(Node):
             point.time_from_start.sec = seconds
             goal.trajectory.points.append(point)
 
-        self.client.send_goal_async(goal)
+        future = self.client.send_goal_async(goal)
+        future.add_done_callback(self.on_goal_response)
         self.get_logger().info(f"Sent head and gripper goal for {message.data}.")
+
+    def on_goal_response(self, future):
+        try:
+            handle = future.result()
+        except Exception as error:
+            self.get_logger().error(f"Could not get Stretch goal response: {error}")
+            return
+
+        if handle.accepted:
+            self.get_logger().info("Stretch accepted the head and gripper goal.")
+        else:
+            self.get_logger().warning("Stretch rejected the head and gripper goal.")
 
 
 def main(args=None):
