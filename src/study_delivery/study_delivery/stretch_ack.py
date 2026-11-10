@@ -1,4 +1,5 @@
 import rclpy
+from action_msgs.msg import GoalStatus
 from control_msgs.action import FollowJointTrajectory
 from rclpy.action import ActionClient
 from rclpy.executors import ExternalShutdownException
@@ -13,12 +14,16 @@ class StretchAcknowledgment(Node):
         self.client = ActionClient(
             self, FollowJointTrajectory, "/stretch_controller/follow_joint_trajectory"
         )
+        self.moving = False  
         self.subscription = self.create_subscription(
             String, "/delivery/request_accepted", self.on_request, 10
         )
         self.get_logger().info("Stretch acknowledgment node started.")
 
     def on_request(self, message):
+        if self.moving:
+            self.get_logger().info(f"Ignoring {message.data}: motion in progress.")
+            return
         if not self.client.server_is_ready():
             self.get_logger().warning("Stretch action server is unavailable.")
             return
@@ -31,21 +36,43 @@ class StretchAcknowledgment(Node):
             point.time_from_start.sec = seconds
             goal.trajectory.points.append(point)
 
-        future = self.client.send_goal_async(goal)
+        self.moving = True
+        try:
+            future = self.client.send_goal_async(goal)
+        except Exception as error:
+            self.moving = False
+            self.get_logger().error(f"Could not send Stretch goal: {error}")
+            return
         future.add_done_callback(self.on_goal_response)
         self.get_logger().info(f"Sent head and gripper goal for {message.data}.")
 
     def on_goal_response(self, future):
         try:
             handle = future.result()
-        except Exception as error:
-            self.get_logger().error(f"Could not get Stretch goal response: {error}")
-            return
-
-        if handle.accepted:
-            self.get_logger().info("Stretch accepted the head and gripper goal.")
-        else:
+            if handle.accepted:
+                self.get_logger().info("Stretch accepted the head and gripper goal.")
+                handle.get_result_async().add_done_callback(self.on_result)
+                return
             self.get_logger().warning("Stretch rejected the head and gripper goal.")
+        except Exception as error:
+            self.get_logger().error(f"Could not track Stretch goal: {error}")
+        self.moving = False
+
+    def on_result(self, future):
+        try:
+            outcome = future.result()
+            status = outcome.status
+            error_code = outcome.result.error_code
+            if status == GoalStatus.STATUS_SUCCEEDED and error_code == FollowJointTrajectory.Result.SUCCESSFUL:
+                self.get_logger().info("Head and gripper motion succeeded.")
+            else:
+                self.get_logger().warning(
+                    f"Head and gripper motion failed: status={status}, error_code={error_code}."
+                )
+        except Exception as error:
+            self.get_logger().error(f"Could not read Stretch motion result: {error}")
+        finally:
+            self.moving = False
 
 
 def main(args=None):
