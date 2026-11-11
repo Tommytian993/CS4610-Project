@@ -6,6 +6,8 @@ from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 from rclpy.node import Node
 from std_msgs.msg import String
 
+from study_delivery.delivery_events import encode_status_event
+
 
 class DeliveryDialogue(Node):
     def __init__(self):
@@ -15,24 +17,37 @@ class DeliveryDialogue(Node):
         self.subscription = self.create_subscription(
             String, "/delivery/request", self.on_request, 10
         )
+        self.status_publisher = self.create_publisher(String, "/delivery/status", 10)
         self.get_logger().info("[IDLE] Waiting for a hand-raise request.")
+
+    def publish_status(self, request, state, recipient=None, detail=None):
+        message = String()
+        message.data = encode_status_event(request, state, recipient, detail)
+        self.status_publisher.publish(message)
 
     def on_request(self, message):
         if self.busy.is_set():
             self.get_logger().info(f"[BUSY] Ignoring delivery request: {message.data}")
+            self.publish_status(
+                message.data, "rejected_busy", detail="Another request is being handled."
+            )
             return
 
         self.busy.set()
         self.pending_request.put_nowait(message.data)
+        self.publish_status(message.data, "request_received")
 
     def run_dialogue(self, request):
         self.get_logger().info(f"[BUSY] Handling delivery request: {request}")
+        self.publish_status(request, "awaiting_confirmation")
         if ask_yes_no("Would you like me to deliver an item?"):
             self.get_logger().info("[INTENT CONFIRMED] User wants to deliver an item.")
             recipient = ask_recipient()
             self.get_logger().info(f'[REQUEST CONFIRMED] {request}: "{recipient}"')
+            self.publish_status(request, "confirmed", recipient)
         else:
             self.get_logger().info("[CANCELLED] Delivery request declined.")
+            self.publish_status(request, "declined")
 
 
 def ask_yes_no(question):
