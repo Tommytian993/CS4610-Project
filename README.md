@@ -9,3 +9,47 @@ For our initial implementation, we will register students via their seat locatio
 ## Progress reporting
 
 The `/delivery/status` topic reports `request_received`, `awaiting_confirmation`, `confirmed` or `declined`, `acknowledgment_started`, and `acknowledgment_succeeded` or `acknowledgment_failed` (as well as `rejected_busy`). Run the `status` node to view these events. The acknowledgment events are emitted when `stretch_ack` receives a request on `/delivery/request_accepted`. They report only the head/gripper acknowledgment motion, not a completed object delivery; pickup, navigation, and placement remain project goals.
+
+## Run the MuJoCo demo
+
+Open four terminals in the project root. Keep each one running as you start the next.
+
+1. **Start MuJoCo.** Wait until Stretch appears in the viewer.
+
+   ```bash
+   bash ../stretch-humble-sim/start.sh
+   ```
+
+2. **Build and start the motion node.** Wait for `Stretch acknowledgment node started.`
+
+   ```bash
+   sudo docker exec cs4610-stretch-sim mkdir -p /tmp/cs4610_ws/src/study_delivery &&
+   sudo docker cp src/study_delivery/. cs4610-stretch-sim:/tmp/cs4610_ws/src/study_delivery/ &&
+   sudo docker exec -it cs4610-stretch-sim bash -c '
+     source /opt/ros/humble/setup.bash &&
+     source /sim_ws/install/local_setup.bash &&
+     cd /tmp/cs4610_ws &&
+     colcon build --packages-select study_delivery &&
+     source install/local_setup.bash &&
+     ros2 run study_delivery stretch_ack
+   '
+   ```
+
+3. **Start the dialogue node.** Wait for `[IDLE] Waiting for a hand-raise request.`
+
+   ```bash
+   sudo docker exec -it cs4610-stretch-sim bash -c '
+     source /opt/ros/humble/setup.bash &&
+     source /sim_ws/install/local_setup.bash &&
+     source /tmp/cs4610_ws/install/local_setup.bash &&
+     ros2 run study_delivery delivery_dialogue
+   '
+   ```
+
+4. **Start the webcam.** Raise one hand for about one second to trigger the demo.
+
+   ```bash
+   source .venv/bin/activate &&
+   sudo -v &&
+   python tools/hand_raise_demo.py --sim
+   ```
