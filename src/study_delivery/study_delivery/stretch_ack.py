@@ -53,38 +53,41 @@ class StretchAcknowledgment(Node):
             )
             return
 
-        goal = FollowJointTrajectory.Goal()
-        goal.trajectory.joint_names = [
-            "joint_lift", "wrist_extension", "joint_wrist_yaw", "joint_gripper_slide"
-        ]
-        for seconds, positions in (
-            (2, [0.59, 0.16, 0.085, 0.04]),
-            (4, [0.37, 0.16, 0.085, 0.04]),
-            (6, [0.37, 0.16, 0.085, -0.01]),
-            (8, [0.52, 0.16, 0.085, -0.01]),  
-        ):
-            point = JointTrajectoryPoint()
-            point.positions = positions
-            point.time_from_start.sec = seconds
-            goal.trajectory.points.append(point)
-
         self.active_request = request
         self.active_recipient = recipient
         self.moving = True
+        self.pickup_stages = iter((
+            ("align", ["joint_lift", "wrist_extension", "joint_wrist_yaw", "joint_gripper_slide"],
+             [[0.59, 0.16, 0.085, 0.04], [0.37, 0.16, 0.085, 0.04]]),
+            ("close gripper", ["joint_gripper_slide"], [[-0.01]]),
+            ("lift", ["joint_lift"], [[0.52]]),
+        ))
+        self.send_next_stage()
+
+    def send_next_stage(self):
+        stage, joints, positions = next(self.pickup_stages)
+        goal = FollowJointTrajectory.Goal()
+        goal.trajectory.joint_names = joints
+        for index, targets in enumerate(positions, start=1):
+            point = JointTrajectoryPoint()
+            point.positions = targets
+            point.time_from_start.sec = 2 * index
+            goal.trajectory.points.append(point)
+        self.pickup_stage = stage
         try:
             future = self.client.send_goal_async(goal)
         except Exception as error:
             self.moving = False
             self.publish_status(
-                request,
+                self.active_request,
                 "acknowledgment_failed",
-                recipient,
+                self.active_recipient,
                 f"Could not send Stretch goal: {error}",
             )
             self.get_logger().error(f"Could not send Stretch goal: {error}")
             return
         future.add_done_callback(self.on_goal_response)
-        self.get_logger().info(f"Sent pickup goal for {request}.")
+        self.get_logger().info(f"Sent pickup stage: {stage}.")
 
     def on_goal_response(self, future):
         try:
@@ -112,13 +115,13 @@ class StretchAcknowledgment(Node):
             )
             return
 
-        result_future.add_done_callback(self.on_result)
         self.get_logger().info("Stretch accepted the pickup goal.")
         self.publish_status(
             self.active_request,
             "acknowledgment_started",
             self.active_recipient,
         )
+        result_future.add_done_callback(self.on_result)
 
     def on_result(self, future):
         try:
@@ -136,11 +139,15 @@ class StretchAcknowledgment(Node):
             )
             return
 
-        self.moving = False
         if (
             status == GoalStatus.STATUS_SUCCEEDED
             and error_code == FollowJointTrajectory.Result.SUCCESSFUL
         ):
+            self.get_logger().info(f"Pickup stage succeeded: {self.pickup_stage}.")
+            if self.pickup_stage != "lift":
+                self.send_next_stage()
+                return
+            self.moving = False
             self.get_logger().info("Pickup trajectory succeeded.")
             self.publish_status(
                 self.active_request,
@@ -149,8 +156,9 @@ class StretchAcknowledgment(Node):
                 "Pickup trajectory completed. Verify the block lifted in MuJoCo.",
             )
         else:
+            self.moving = False
             self.get_logger().warning(
-                f"Pickup trajectory failed: status={status}, error_code={error_code}."
+                f"Pickup stage {self.pickup_stage} failed: status={status}, error_code={error_code}."
             )
             self.publish_status(
                 self.active_request,
