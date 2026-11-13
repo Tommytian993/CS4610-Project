@@ -69,3 +69,10 @@ ros2 run study_delivery hand_raise --ros-args -p image_topic:=/camera/color/imag
 For a vision-only test, keep `stretch_ack` stopped. In another sourced terminal,
 run `ros2 topic echo /delivery/request` and raise one hand for about a second.
 Omit `image_topic` to use the original webcam mode with `camera_index`.
+
+GRIPPER_POS="$(ros2 topic echo /stretch/joint_states --once |
+  python3 -c 'import sys, yaml; s = next(yaml.safe_load_all(sys.stdin)); print(s["position"][s["name"].index("joint_gripper_finger_left")])')" &&
+echo "Current gripper angle: $GRIPPER_POS rad" &&
+ros2 action send_goal /stretch_controller/follow_joint_trajectory \
+  control_msgs/action/FollowJointTrajectory \
+  "{trajectory: {joint_names: [joint_gripper_finger_left], points: [{positions: [$GRIPPER_POS], time_from_start: {sec: 2}}]}}"
