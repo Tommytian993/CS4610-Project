@@ -77,6 +77,8 @@ def run_detection(node):
                         break
                     continue
                 frame = image_to_bgr(latest_image)
+                frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+                latest_image = None
                 latest_image = None
             else:
                 ok, frame = camera.read()
