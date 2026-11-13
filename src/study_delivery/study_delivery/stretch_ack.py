@@ -54,10 +54,17 @@ class StretchAcknowledgment(Node):
             return
 
         goal = FollowJointTrajectory.Goal()
-        goal.trajectory.joint_names = ["joint_head_pan", "joint_gripper_slide"]
-        for seconds, angle, gripper in ((2, -0.60, 0.035), (4, 0.0, -0.01)):
+        goal.trajectory.joint_names = [
+            "joint_lift", "wrist_extension", "joint_wrist_yaw", "joint_gripper_slide"
+        ]
+        for seconds, positions in (
+            (2, [0.59, 0.16, 0.085, 0.04]),
+            (4, [0.37, 0.16, 0.085, 0.04]),
+            (6, [0.37, 0.16, 0.085, -0.01]),
+            (8, [0.52, 0.16, 0.085, -0.01]),  
+        ):
             point = JointTrajectoryPoint()
-            point.positions = [angle, gripper]
+            point.positions = positions
             point.time_from_start.sec = seconds
             goal.trajectory.points.append(point)
 
@@ -77,12 +84,24 @@ class StretchAcknowledgment(Node):
             self.get_logger().error(f"Could not send Stretch goal: {error}")
             return
         future.add_done_callback(self.on_goal_response)
+<<<<<<< HEAD
         self.get_logger().info(f"Sent head and gripper goal for {request}.")
+=======
+        self.get_logger().info(f"Sent pickup goal for {message.data}.")
+>>>>>>> ba7131b (feat: add picking up the demo block and lift it 15 cm for  more visible detection feedback)
 
     def on_goal_response(self, future):
         try:
             handle = future.result()
+<<<<<<< HEAD
             result_future = handle.get_result_async() if handle.accepted else None
+=======
+            if handle.accepted:
+                self.get_logger().info("Stretch accepted the pickup goal.")
+                handle.get_result_async().add_done_callback(self.on_result)
+                return
+            self.get_logger().warning("Stretch rejected the pickup goal.")
+>>>>>>> ba7131b (feat: add picking up the demo block and lift it 15 cm for  more visible detection feedback)
         except Exception as error:
             self.get_logger().error(f"Could not track Stretch goal: {error}")
             self.moving = False
@@ -118,6 +137,15 @@ class StretchAcknowledgment(Node):
             outcome = future.result()
             status = outcome.status
             error_code = outcome.result.error_code
+<<<<<<< HEAD
+=======
+            if status == GoalStatus.STATUS_SUCCEEDED and error_code == FollowJointTrajectory.Result.SUCCESSFUL:
+                self.get_logger().info("Pickup trajectory succeeded.")
+            else:
+                self.get_logger().warning(
+                    f"Pickup trajectory failed: status={status}, error_code={error_code}."
+                )
+>>>>>>> ba7131b (feat: add picking up the demo block and lift it 15 cm for  more visible detection feedback)
         except Exception as error:
             self.get_logger().error(f"Could not read Stretch motion result: {error}")
             self.moving = False

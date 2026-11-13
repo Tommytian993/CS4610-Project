@@ -12,8 +12,9 @@ from study_delivery.delivery_events import encode_status_event
 class DeliveryDialogue(Node):
     def __init__(self):
         super().__init__("delivery_dialogue")
-        self.busy = Event()  # ROS 回调和终端主线程共享的忙碌标记。
-        self.pending_request = Queue(maxsize=1)  # 只把当前请求交给主线程。
+        self.busy = Event()  
+        self.pending_request = Queue(maxsize=1)  
+        self.accepted_publisher = self.create_publisher(String, "/delivery/request_accepted", 10)
         self.subscription = self.create_subscription(
             String, "/delivery/request", self.on_request, 10
         )
@@ -35,7 +36,12 @@ class DeliveryDialogue(Node):
 
         self.busy.set()
         self.pending_request.put_nowait(message.data)
+<<<<<<< HEAD
         self.publish_status(message.data, "request_received")
+=======
+        # 只通知动作节点处理当前接受的请求。
+        self.accepted_publisher.publish(message)
+>>>>>>> ba7131b (feat: add picking up the demo block and lift it 15 cm for  more visible detection feedback)
 
     def run_dialogue(self, request):
         self.get_logger().info(f"[BUSY] Handling delivery request: {request}")

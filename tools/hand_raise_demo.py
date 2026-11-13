@@ -1,10 +1,29 @@
+import argparse
+import subprocess
 import time 
+from threading import Thread
 
 import cv2
 from ultralytics import YOLO
 
 
+def publish_to_sim(request_count):
+    command = [
+        "sudo", "-n", "docker", "exec", "cs4610-stretch-sim", "bash", "-c",
+        'source /opt/ros/humble/setup.bash && '
+        'exec ros2 topic pub --once -w 1 /delivery/request std_msgs/msg/String "$1"',
+        "--", f"{{data: 'hand_raise:{request_count}'}}",
+    ]
+    try:
+        subprocess.run(command, check=True, timeout=8)
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f"Could not publish simulation request: {error}", flush=True)
+
+
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sim", action="store_true", help="Send hand raises to the simulator")
+    args = parser.parse_args()
     model = YOLO("yolo11n-pose.pt")  # human pose model
     camera = cv2.VideoCapture(0)  # 0 for default camera
     raised_since = None  
@@ -95,6 +114,10 @@ def main():
                     if elapsed >= 1.0:  # need to maintain raised for at least one second to trigger
                         triggered = True
                         request_count += 1
+                        if args.sim:
+                            Thread(
+                                target=publish_to_sim, args=(request_count,), daemon=True
+                            ).start()
                         status, color = "REQUEST SENT", (0, 255, 0)
                         print(f"[Request {request_count}] Would you like me to deliver an item?",
                               flush=True)
