@@ -36,12 +36,8 @@ class DeliveryDialogue(Node):
 
         self.busy.set()
         self.pending_request.put_nowait(message.data)
-<<<<<<< HEAD
         self.publish_status(message.data, "request_received")
-=======
-        # 只通知动作节点处理当前接受的请求。
         self.accepted_publisher.publish(message)
->>>>>>> ba7131b (feat: add picking up the demo block and lift it 15 cm for  more visible detection feedback)
 
     def run_dialogue(self, request):
         self.get_logger().info(f"[BUSY] Handling delivery request: {request}")

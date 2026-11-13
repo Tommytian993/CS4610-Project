@@ -84,24 +84,12 @@ class StretchAcknowledgment(Node):
             self.get_logger().error(f"Could not send Stretch goal: {error}")
             return
         future.add_done_callback(self.on_goal_response)
-<<<<<<< HEAD
-        self.get_logger().info(f"Sent head and gripper goal for {request}.")
-=======
-        self.get_logger().info(f"Sent pickup goal for {message.data}.")
->>>>>>> ba7131b (feat: add picking up the demo block and lift it 15 cm for  more visible detection feedback)
+        self.get_logger().info(f"Sent pickup goal for {request}.")
 
     def on_goal_response(self, future):
         try:
             handle = future.result()
-<<<<<<< HEAD
             result_future = handle.get_result_async() if handle.accepted else None
-=======
-            if handle.accepted:
-                self.get_logger().info("Stretch accepted the pickup goal.")
-                handle.get_result_async().add_done_callback(self.on_result)
-                return
-            self.get_logger().warning("Stretch rejected the pickup goal.")
->>>>>>> ba7131b (feat: add picking up the demo block and lift it 15 cm for  more visible detection feedback)
         except Exception as error:
             self.get_logger().error(f"Could not track Stretch goal: {error}")
             self.moving = False
@@ -114,7 +102,7 @@ class StretchAcknowledgment(Node):
             return
 
         if not handle.accepted:
-            self.get_logger().warning("Stretch rejected the head and gripper goal.")
+            self.get_logger().warning("Stretch rejected the pickup goal.")
             self.moving = False
             self.publish_status(
                 self.active_request,
@@ -125,7 +113,7 @@ class StretchAcknowledgment(Node):
             return
 
         result_future.add_done_callback(self.on_result)
-        self.get_logger().info("Stretch accepted the head and gripper goal.")
+        self.get_logger().info("Stretch accepted the pickup goal.")
         self.publish_status(
             self.active_request,
             "acknowledgment_started",
@@ -137,15 +125,6 @@ class StretchAcknowledgment(Node):
             outcome = future.result()
             status = outcome.status
             error_code = outcome.result.error_code
-<<<<<<< HEAD
-=======
-            if status == GoalStatus.STATUS_SUCCEEDED and error_code == FollowJointTrajectory.Result.SUCCESSFUL:
-                self.get_logger().info("Pickup trajectory succeeded.")
-            else:
-                self.get_logger().warning(
-                    f"Pickup trajectory failed: status={status}, error_code={error_code}."
-                )
->>>>>>> ba7131b (feat: add picking up the demo block and lift it 15 cm for  more visible detection feedback)
         except Exception as error:
             self.get_logger().error(f"Could not read Stretch motion result: {error}")
             self.moving = False
@@ -162,16 +141,16 @@ class StretchAcknowledgment(Node):
             status == GoalStatus.STATUS_SUCCEEDED
             and error_code == FollowJointTrajectory.Result.SUCCESSFUL
         ):
-            self.get_logger().info("Head and gripper motion succeeded.")
+            self.get_logger().info("Pickup trajectory succeeded.")
             self.publish_status(
                 self.active_request,
                 "acknowledgment_succeeded",
                 self.active_recipient,
-                "Object pickup, navigation, and placement are not part of this motion.",
+                "Pickup trajectory completed. Verify the block lifted in MuJoCo.",
             )
         else:
             self.get_logger().warning(
-                f"Head and gripper motion failed: status={status}, error_code={error_code}."
+                f"Pickup trajectory failed: status={status}, error_code={error_code}."
             )
             self.publish_status(
                 self.active_request,
