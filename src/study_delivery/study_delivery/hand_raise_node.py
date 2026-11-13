@@ -1,10 +1,13 @@
 import time 
 
 import cv2
+import numpy as np
 from ultralytics import YOLO
 
 import rclpy 
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
+from sensor_msgs.msg import Image
 from std_msgs.msg import String  # current stage simple strings for denoting someone requesting service
 
 
@@ -14,6 +17,7 @@ class HandRaiseNode(Node):
         # Publisher：send /delivery/request String messages
         self.request_publisher = self.create_publisher(String, "/delivery/request", 10)
         self.declare_parameter("camera_index", 0)  # allow using ros index to choose camera
+        self.declare_parameter("image_topic", "")
         self.get_logger().info("Ready: raise a hand for one second to publish a request.")
 
     def publish_request(self, request_count):
@@ -23,22 +27,62 @@ class HandRaiseNode(Node):
         self.get_logger().info(f"Published {message.data} on /delivery/request")
 
 
+def image_to_bgr(msg):
+    """Convert a raw ROS color image, accounting for row padding."""
+    if msg.encoding not in ("rgb8", "bgr8"):
+        raise ValueError(f"Unsupported camera encoding: {msg.encoding}")
+    if msg.height <= 0 or msg.width <= 0 or msg.step < msg.width * 3:
+        raise ValueError("Invalid color image dimensions or row stride")
+    rows = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.step)
+    frame = rows[:, :msg.width * 3].reshape(msg.height, msg.width, 3)
+    if msg.encoding == "rgb8":
+        frame = frame[:, :, ::-1]
+    return frame.copy()
+
+
 def run_detection(node):
     model = YOLO("yolo11n-pose.pt")  # human pose model
-    camera = cv2.VideoCapture(node.get_parameter("camera_index").value)  # 0 for default camera
+    image_topic = node.get_parameter("image_topic").value
+    camera = None
+    subscription = None
+    latest_image = None
+
+    def receive_image(msg):
+        nonlocal latest_image
+        latest_image = msg
+
     raised_since = None  
     lowered_since = None 
     triggered = False  # locked in until both hands are down
     request_count = 0  
     try:
-        if not camera.isOpened():
-            raise RuntimeError("Cannot open camera. Please check permissions.")
+        if image_topic:
+            subscription = node.create_subscription(
+                Image, image_topic, receive_image,
+                QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT),
+            )
+            node.get_logger().info(f"Waiting for color images on {image_topic}")
+        else:
+            camera_index = node.get_parameter("camera_index").value
+            camera = cv2.VideoCapture(camera_index)
+            if not camera.isOpened():
+                raise RuntimeError(f"Cannot open webcam at index {camera_index}.")
 
         while rclpy.ok():
-            ok, frame = camera.read()  # read one frame
-            if not ok:
-                print("Cannot read camera frame. Exiting.")
-                break
+            if subscription is not None:
+                rclpy.spin_once(node, timeout_sec=0.2)
+                if latest_image is None:
+                    raised_since = lowered_since = None
+                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                        break
+                    continue
+                frame = image_to_bgr(latest_image)
+                latest_image = None
+            else:
+                ok, frame = camera.read()
+                if not ok:
+                    print("Cannot read camera frame. Exiting.")
+                    break
 
             # detect pose key points
             result = model.predict(
@@ -138,7 +182,10 @@ def run_detection(node):
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break  
     finally:
-        camera.release() 
+        if camera is not None:
+            camera.release()
+        if subscription is not None:
+            node.destroy_subscription(subscription)
         cv2.destroyAllWindows()
 
 

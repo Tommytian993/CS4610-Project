@@ -53,3 +53,19 @@ Open four terminals in the project root. Keep each one running as you start the 
    sudo -v &&
    python tools/hand_raise_demo.py --sim
    ```
+
+## Test hand-raise detection on Stretch
+
+With the real robot driver running and its ROS workspace sourced, check that
+`ros2 topic hz /camera/color/image_raw` reports frames. From the project root,
+with the vision dependencies installed:
+
+```bash
+colcon build --base-paths src --packages-select study_delivery --symlink-install &&
+source install/setup.bash &&
+ros2 run study_delivery hand_raise --ros-args -p image_topic:=/camera/color/image_raw
+```
+
+For a vision-only test, keep `stretch_ack` stopped. In another sourced terminal,
+run `ros2 topic echo /delivery/request` and raise one hand for about a second.
+Omit `image_topic` to use the original webcam mode with `camera_index`.
