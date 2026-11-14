@@ -57,9 +57,9 @@ class StretchAcknowledgment(Node):
         self.active_recipient = recipient
         self.moving = True
         self.pickup_stages = iter((
-            ("align", ["joint_lift", "wrist_extension", "joint_wrist_yaw", "joint_gripper_slide"],
+            ("align", ["joint_lift", "wrist_extension", "joint_wrist_yaw", "joint_gripper_finger_left"],
              [[0.59, 0.16, 0.085, 0.04], [0.37, 0.16, 0.085, 0.04]]),
-            ("close gripper", ["joint_gripper_slide"], [[-0.01]]),
+            ("close gripper", ["joint_gripper_finger_left"], [[-0.01]]),
             ("lift", ["joint_lift"], [[0.52]]),
         ))
         self.send_next_stage()
