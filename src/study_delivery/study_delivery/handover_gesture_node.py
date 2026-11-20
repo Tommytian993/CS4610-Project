@@ -89,6 +89,7 @@ class HandoverGestureNode(Node):
         self.declare_parameter("rotate_clockwise", True)
         self.declare_parameter("show_preview", False)
         self.declare_parameter("thumb_up_score", THUMB_UP_SCORE)
+        self.declare_parameter("enable_thumb_down", False)
 
         self.image_topic = self.get_parameter(
             "image_topic"
@@ -110,11 +111,16 @@ class HandoverGestureNode(Node):
         if not 0.0 < self.thumb_up_score <= 1.0:
             raise ValueError("thumb_up_score must be greater than 0 and at most 1")
 
+        self.gesture_thresholds = {"Thumb_Up": self.thumb_up_score}
+        if self.get_parameter("enable_thumb_down").value:
+            self.gesture_thresholds["Thumb_Down"] = self.thumb_up_score
+
         self.latest_frame = None
         self.last_frame_time = None
         self.last_timestamp_ms = -1
 
-        self.thumb_up_since = None
+        self.gesture_since = None
+        self.active_gesture = None
         self.reported = False
 
         # Publish confirmed handover gestures.
@@ -166,7 +172,7 @@ class HandoverGestureNode(Node):
             and frame_time - self.last_frame_time
             > MAX_FRAME_GAP_SECONDS
         ):
-            self.thumb_up_since = None
+            self.gesture_since = None
 
         self.last_frame_time = frame_time
 
@@ -177,7 +183,7 @@ class HandoverGestureNode(Node):
             )
 
         except (ValueError, cv2.error) as exc:
-            self.thumb_up_since = None
+            self.gesture_since = None
 
             self.get_logger().warning(
                 f"Camera frame error: {exc}"
@@ -207,57 +213,35 @@ class HandoverGestureNode(Node):
             if categories
         ]
 
-        thumb_up = any(
-            gesture.category_name == "Thumb_Up"
-            and gesture.score >= self.thumb_up_score
+        candidates = {
+            gesture.category_name
             for gesture in top_gestures
-        )
-
-        if not thumb_up:
-
-            self.thumb_up_since = None
+            if gesture.category_name in self.gesture_thresholds
+            and gesture.score >= self.gesture_thresholds[gesture.category_name]
+        }
+        gesture = next(iter(candidates)) if len(candidates) == 1 else None
+        if gesture != self.active_gesture:
+            self.active_gesture = gesture
+            self.gesture_since = None
             self.reported = False
 
-            status = f"Show thumbs-up (min score {self.thumb_up_score:.2f})"
-
+        if gesture is None:
+            label = "thumbs-up or thumbs-down" if "Thumb_Down" in self.gesture_thresholds else "thumbs-up"
+            status = f"Show {label} (min score {self.thumb_up_score:.2f})"
         else:
+            if self.gesture_since is None:
+                self.gesture_since = frame_time
+            held_seconds = frame_time - self.gesture_since
 
-            if self.thumb_up_since is None:
-                self.thumb_up_since = frame_time
-
-            held_seconds = (
-                frame_time - self.thumb_up_since
-            )
-
-            if (
-                not self.reported
-                and held_seconds >= HOLD_SECONDS
-            ):
-
-                self.get_logger().info(
-                    "Thumbs-up detected"
-                )
-
-                # Send one ROS gesture event.
-                message = String()
-                message.data = "Thumb_Up"
-
-                self.gesture_publisher.publish(message)
-
-                self.get_logger().info(
-                    "Published Thumb_Up to "
-                    "/delivery/handover_gesture"
-                )
-
+            if not self.reported and held_seconds >= HOLD_SECONDS:
+                self.gesture_publisher.publish(String(data=gesture))
+                self.get_logger().info(f"Published {gesture} to /delivery/handover_gesture")
                 self.reported = True
 
             if self.reported:
-                status = "Detected - lower hand to reset"
+                status = f"Detected {gesture} - lower hand to reset"
             else:
-                status = (
-                    f"Hold: {held_seconds:.1f}/"
-                    f"{HOLD_SECONDS:.1f} s"
-                )
+                status = f"Hold: {held_seconds:.1f}/{HOLD_SECONDS:.1f} s"
 
         if self.show_preview:
             self.draw_preview(
@@ -350,7 +334,7 @@ class HandoverGestureNode(Node):
 
                 self.get_logger().info(
                     f"Listening on {self.image_topic}. "
-                    "Publishing confirmed thumbs-up events."
+                    "Publishing confirmed handover gestures."
                 )
 
                 while rclpy.ok():

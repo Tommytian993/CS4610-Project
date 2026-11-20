@@ -75,6 +75,19 @@ class PickupController(Node):
         self.armed = False
         self.busy = False
         self.finished = False
+        self.declare_parameter("enable_release", False)
+        self.declare_parameter("release_position", float("nan"))
+        self.enable_release = self.get_parameter("enable_release").value
+        self.release_position = self.get_parameter("release_position").value
+        self.waiting_for_release = False
+        if self.enabled and self.enable_release and not (
+            math.isfinite(self.release_position)
+            and math.isfinite(self.close_position)
+            and self.release_position > self.close_position
+            and math.isfinite(self.duration)
+            and self.duration > 0
+        ):
+            raise ValueError("Configure calibrated close and release positions and a positive duration.")
 
         # Connect to the Stretch trajectory controller.
         self.client = ActionClient(
@@ -210,6 +223,9 @@ class PickupController(Node):
     def on_gesture(self, message):
         """Handle a confirmed gesture event."""
 
+        if message.data == "Thumb_Down":
+            self.on_release()
+            return
         if message.data != "Thumb_Up":
             return
 
@@ -227,6 +243,7 @@ class PickupController(Node):
         self.finished = True
 
         if not self.enabled:
+            self.waiting_for_release = self.enable_release
             self.get_logger().info(
                 "DRY RUN: Thumb_Up received; "
                 "WOULD CLOSE GRIPPER. No motion sent."
@@ -241,6 +258,18 @@ class PickupController(Node):
             return
 
         self.send_trajectory("CLOSE", [self.joint_name], [[self.close_position]])
+
+    def on_release(self):
+        if not self.enable_release or self.busy or not self.waiting_for_release:
+            return
+        if not self.enabled:
+            self.waiting_for_release = False
+            self.get_logger().info("DRY RUN: Thumb_Down received; WOULD OPEN GRIPPER.")
+            return
+        if not self.client.server_is_ready():
+            self.get_logger().error("Stretch action server unavailable. No release sent.")
+            return
+        self.send_trajectory("RELEASE", [self.joint_name], [[self.release_position]])
 
     def send_trajectory(self, stage, joints, positions):
 
@@ -327,8 +356,14 @@ class PickupController(Node):
                 if stage == "READY":
                     self.armed = True
                     self.get_logger().info("Pickup ready. Waiting for Thumb_Up.")
-                else:
+                elif stage == "CLOSE":
+                    self.waiting_for_release = self.enable_release
                     self.get_logger().info("PICKUP CLOSE SUCCEEDED.")
+                    if self.waiting_for_release:
+                        self.get_logger().info("Waiting for Thumb_Down to release.")
+                else:
+                    self.waiting_for_release = False
+                    self.get_logger().info("PICKUP RELEASE SUCCEEDED.")
 
             else:
                 self.get_logger().error(
