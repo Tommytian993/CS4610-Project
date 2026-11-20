@@ -8,4 +8,23 @@ For our initial implementation, we will register students via their seat locatio
 
 ## Progress reporting
 
-The `/delivery/status` topic reports `request_received`, `awaiting_confirmation`, `confirmed` or `declined`, `acknowledgment_started`, and `acknowledgment_succeeded` or `acknowledgment_failed` (as well as `rejected_busy`). Run the `status` node to view these events. The acknowledgment events are emitted when `stretch_ack` receives a request on `/delivery/request_accepted`. They report only the head/gripper acknowledgment motion, not a completed object delivery; pickup, navigation, and placement remain project goals.
+The `/delivery/status` topic reports `request_received`, `awaiting_confirmation`, `confirmed` or `declined`, `acknowledgment_started`, and `acknowledgment_succeeded` or `acknowledgment_failed` (as well as `rejected_busy`). Run the `status` node to view events and the tracked delivery state: `request_received`, `awaiting_confirmation`, `confirmed`, `declined`, `in_progress`, `arrived`, `failed`, or `rejected_busy`. Acknowledgment and navigation outcomes are tracked separately because they can run independently. `arrived` means Nav2 reached its goal; it does not mean the item was handed over. Pickup, handover confirmation, and placement remain project goals.
+
+## Side navigation
+
+Run `ros2 run study_delivery side_navigation` to send confirmed deliveries to
+either the left or right side of the room. The recipient description must
+include `left` or `right`, for example `Left window table, seat 4`.
+
+The node subscribes to `/delivery/navigation_request` and uses Nav2's
+`/navigate_to_pose` action. Configure the destination poses with ROS parameters:
+
+```bash
+ros2 run study_delivery side_navigation \
+  --ros-args \
+  -p left_pose:=[2.0,0.0,0.0] \
+  -p right_pose:=[-2.0,0.0,3.14]
+```
+
+Navigation progress is published to `/delivery/status` as
+`navigation_started`, `navigation_succeeded`, or `navigation_failed`.
