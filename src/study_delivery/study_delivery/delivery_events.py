@@ -10,7 +10,7 @@ def encode_status_event(request, state, recipient=None, detail=None):
     return json.dumps(event)
 
 
-def format_status_event(payload):
+def parse_status_event(payload):
     try:
         event = json.loads(payload)
     except json.JSONDecodeError as error:
@@ -31,6 +31,16 @@ def format_status_event(payload):
         raise ValueError("Status event recipient must be a string.")
     if detail is not None and not isinstance(detail, str):
         raise ValueError("Status event detail must be a string.")
+
+    return event
+
+
+def format_status_event(payload):
+    event = parse_status_event(payload)
+    request = event["request"]
+    state = event["state"]
+    recipient = event.get("recipient")
+    detail = event.get("detail")
 
     parts = [f"[{state.upper()}] Request {request}"]
     if recipient:

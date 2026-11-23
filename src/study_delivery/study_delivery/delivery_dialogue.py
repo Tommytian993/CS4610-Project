@@ -7,6 +7,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 from study_delivery.delivery_events import encode_status_event
+from study_delivery.side_navigation import encode_navigation_request, recipient_side
 
 
 class DeliveryDialogue(Node):
@@ -18,12 +19,33 @@ class DeliveryDialogue(Node):
             String, "/delivery/request", self.on_request, 10
         )
         self.status_publisher = self.create_publisher(String, "/delivery/status", 10)
+        self.navigation_publisher = self.create_publisher(
+            String, "/delivery/navigation_request", 10
+        )
+        self.accepted_publisher = self.create_publisher(
+            String, "/delivery/request_accepted", 10
+        )
         self.get_logger().info("[IDLE] Waiting for a hand-raise request.")
 
     def publish_status(self, request, state, recipient=None, detail=None):
         message = String()
         message.data = encode_status_event(request, state, recipient, detail)
         self.status_publisher.publish(message)
+
+    def publish_confirmed_delivery(self, request, recipient):
+        accepted = String()
+        accepted.data = request
+        self.accepted_publisher.publish(accepted)
+
+        try:
+            side = recipient_side(recipient)
+        except ValueError as error:
+            self.get_logger().warning(str(error))
+            return
+
+        navigation = String()
+        navigation.data = encode_navigation_request(request, recipient, side)
+        self.navigation_publisher.publish(navigation)
 
     def on_request(self, message):
         if self.busy.is_set():
@@ -45,6 +67,7 @@ class DeliveryDialogue(Node):
             recipient = ask_recipient()
             self.get_logger().info(f'[REQUEST CONFIRMED] {request}: "{recipient}"')
             self.publish_status(request, "confirmed", recipient)
+            self.publish_confirmed_delivery(request, recipient)
         else:
             self.get_logger().info("[CANCELLED] Delivery request declined.")
             self.publish_status(request, "declined")
@@ -66,6 +89,11 @@ def ask_recipient():
         description = input("Who should I deliver it to? ").strip()
         if not description:
             print("Please enter a recipient description.")
+            continue
+        try:
+            recipient_side(description)
+        except ValueError as error:
+            print(str(error))
             continue
 
         # repeat recipient description or go back to the question

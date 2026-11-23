@@ -17,5 +17,6 @@ setup(
     entry_points={"console_scripts": ["status = study_delivery.status_node:main",
         "hand_raise = study_delivery.hand_raise_node:main",
         "delivery_dialogue = study_delivery.delivery_dialogue:main",
+        "side_navigation = study_delivery.side_navigation_node:main",
         "stretch_ack = study_delivery.stretch_ack:main"]},
 )
