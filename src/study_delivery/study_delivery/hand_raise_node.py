@@ -18,6 +18,11 @@ class HandRaiseNode(Node):
         self.request_publisher = self.create_publisher(String, "/delivery/request", 10)
         self.declare_parameter("camera_index", 0)  # allow using ros index to choose camera
         self.declare_parameter("image_topic", "")
+        self.declare_parameter("enable_delivery_demo", False)
+        self.crossed_arms_publisher = (
+            self.create_publisher(String, "/delivery/handover_gesture", 10)
+            if self.get_parameter("enable_delivery_demo").value else None
+        )
         self.get_logger().info("Ready: raise a hand for one second to publish a request.")
 
     def publish_request(self, request_count):
@@ -40,6 +45,44 @@ def image_to_bgr(msg):
     return frame.copy()
 
 
+def has_crossed_forearms(points, scores):
+    """Recognize a visible X across the chest using the two forearm segments."""
+    if any(not scores[index] >= 0.5 for index in range(5, 11)):
+        return False
+
+    left_shoulder, right_shoulder, left_elbow, right_elbow, left_wrist, right_wrist = points[5:11]
+    shoulder_width = abs(left_shoulder[0] - right_shoulder[0])
+    if shoulder_width < 1:
+        return False
+
+    center_x, shoulder_y = (left_shoulder + right_shoulder) / 2
+    direction = np.sign(left_shoulder[0] - right_shoulder[0])
+    margin = 0.08 * shoulder_width
+    if not (
+        (left_elbow[0] - center_x) * direction > margin
+        and (right_elbow[0] - center_x) * direction < -margin
+        and (left_wrist[0] - center_x) * direction < -margin
+        and (right_wrist[0] - center_x) * direction > margin
+        and all(
+            shoulder_y - 0.30 * shoulder_width < wrist[1] < shoulder_y + shoulder_width
+            for wrist in (left_wrist, right_wrist)
+        )
+    ):
+        return False
+
+    def side(start, end, point):
+        dx, dy = end - start
+        px, py = point - start
+        return dx * py - dy * px
+
+    return (
+        side(left_elbow, left_wrist, right_elbow)
+        * side(left_elbow, left_wrist, right_wrist) < 0
+        and side(right_elbow, right_wrist, left_elbow)
+        * side(right_elbow, right_wrist, left_wrist) < 0
+    )
+
+
 def run_detection(node):
     model = YOLO("yolo11n-pose.pt")  # human pose model
     image_topic = node.get_parameter("image_topic").value
@@ -54,7 +97,10 @@ def run_detection(node):
     raised_since = None  
     lowered_since = None 
     triggered = False  # locked in until both hands are down
-    request_count = 0  
+    request_count = 0
+    crossed_since = None
+    crossed_reported = False
+    last_pose_frame = None
     try:
         if image_topic:
             subscription = node.create_subscription(
@@ -97,6 +143,7 @@ def run_detection(node):
             status = "SHOW ONE PERSON AND BOTH WRISTS"
             color = (0, 200, 255) # opencv -> BGR
             observation = None  # None for unclear (not hands down)
+            crossed_arms = False
             now = time.monotonic()
 
             # result is this frame's yolo detection, 
@@ -116,6 +163,8 @@ def run_detection(node):
 
                     # keypoint confidence array
                     scores = confidence[0].cpu().numpy()
+                    if node.crossed_arms_publisher is not None:
+                        crossed_arms = has_crossed_forearms(points, scores)
 
                     # assume no hand raised
                     raised = False
@@ -147,6 +196,21 @@ def run_detection(node):
                     elif visible_arms == 2:
                         observation = False  # clear on both sides, but not raised
 
+            if last_pose_frame is not None and now - last_pose_frame > 0.5:
+                crossed_since = None
+            last_pose_frame = now
+            if crossed_arms:
+                observation = None  # A rejection pose must not also start a pickup.
+                if crossed_since is None:
+                    crossed_since = now
+                if not crossed_reported and now - crossed_since >= 1.0:
+                    node.crossed_arms_publisher.publish(String(data="Crossed_Arms"))
+                    node.get_logger().info("Published Crossed_Arms on /delivery/handover_gesture")
+                    crossed_reported = True
+            else:
+                crossed_since = None
+                crossed_reported = False
+
             # turn frame detection into one request
             if observation is True:
                 lowered_since = None
@@ -175,6 +239,10 @@ def run_detection(node):
                 # stop counting when unclear, no one or multiple people in sight
                 raised_since = None
                 lowered_since = None
+
+            if crossed_arms:
+                status = "CROSSED ARMS DETECTED" if crossed_reported else "HOLD CROSSED ARMS"
+                color = (0, 255, 0) if crossed_reported else (0, 200, 255)
 
             cv2.putText(annotated_frame, f"Requests: {request_count}", (20, 65),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)

@@ -1,4 +1,5 @@
 import math
+from enum import Enum, auto
 
 import rclpy
 from rclpy.node import Node
@@ -15,6 +16,15 @@ READY_ARM_JOINTS = (
     "joint_lift", "wrist_extension", "joint_wrist_yaw", "joint_wrist_pitch",
     "joint_wrist_roll",
 )
+
+
+class PickupState(Enum):
+    IDLE = auto()
+    READY = auto()
+    HOLDING = auto()
+    AT_RECIPIENT = auto()
+    COMPLETE = auto()
+    TURN_UNCONFIRMED = auto()
 
 
 class PickupController(Node):
@@ -72,14 +82,16 @@ class PickupController(Node):
         self.hand_raise_mode = self.get_parameter("hand_raise_mode").value
         self.ready_position = self.get_parameter("ready_position").value
         self.ready_approach_position = self.get_parameter("ready_approach_position").value
-        self.armed = False
+        self.state = PickupState.IDLE
         self.busy = False
-        self.finished = False
         self.declare_parameter("enable_release", False)
         self.declare_parameter("release_position", float("nan"))
-        self.enable_release = self.get_parameter("enable_release").value
+        self.declare_parameter("enable_delivery_demo", False)
+        self.delivery_demo = self.get_parameter("enable_delivery_demo").value
+        self.enable_release = (
+            self.get_parameter("enable_release").value or self.delivery_demo
+        )
         self.release_position = self.get_parameter("release_position").value
-        self.waiting_for_release = False
         if self.enabled and self.enable_release and not (
             math.isfinite(self.release_position)
             and math.isfinite(self.close_position)
@@ -134,7 +146,7 @@ class PickupController(Node):
                 "Motion in progress; cannot arm."
             )
 
-        elif self.finished:
+        elif self.state not in (PickupState.IDLE, PickupState.READY):
             response.success = False
             response.message = (
                 "Already triggered once; restart node to reset."
@@ -150,7 +162,7 @@ class PickupController(Node):
                 "before enabling motion."
             )
 
-        elif self.enabled and self.duration <= 0:
+        elif self.enabled and (not math.isfinite(self.duration) or self.duration <= 0):
             response.success = False
             response.message = (
                 "duration_seconds must be positive."
@@ -166,7 +178,7 @@ class PickupController(Node):
             )
 
         else:
-            self.armed = True
+            self.state = PickupState.READY
 
             response.success = True
             response.message = (
@@ -181,11 +193,11 @@ class PickupController(Node):
     def on_hand_raise(self, message):
         if not message.data.startswith("hand_raise:"):
             return
-        if self.busy or self.armed or self.finished:
+        if self.busy or self.state != PickupState.IDLE:
             return
 
         if not self.enabled:
-            self.armed = True
+            self.state = PickupState.READY
             self.get_logger().info(
                 "DRY RUN: Hand raise received; WOULD MOVE TO READY. Waiting for Thumb_Up."
             )
@@ -223,64 +235,93 @@ class PickupController(Node):
     def on_gesture(self, message):
         """Handle a confirmed gesture event."""
 
-        if message.data == "Thumb_Down":
-            self.on_release()
-            return
-        if message.data != "Thumb_Up":
+        gesture = message.data
+        if self.busy:
             return
 
-        if not self.armed:
-            self.get_logger().info(
-                "Thumb_Up ignored: controller not armed."
-            )
-            return
+        if gesture == "Thumb_Up" and self.state == PickupState.READY:
+            self.start_gesture_action("CLOSE", [self.joint_name], [[self.close_position]])
+        elif gesture == "Thumb_Down" and self.state == PickupState.HOLDING and self.enable_release:
+            self.start_gesture_action("RELEASE", [self.joint_name], [[self.release_position]])
+        elif self.delivery_demo:
+            if gesture == "Victory" and self.state == PickupState.HOLDING:
+                self.start_turn("TURN_TO_RECIPIENT", math.pi / 2)
+            elif self.state == PickupState.AT_RECIPIENT:
+                if gesture == "OK_Sign":
+                    self.start_gesture_action(
+                        "HANDOFF", [self.joint_name], [[self.release_position]]
+                    )
+                elif gesture == "Crossed_Arms":
+                    self.start_turn("TURN_BACK", -math.pi / 2)
 
-        if self.busy or self.finished:
-            return
+    def start_turn(self, stage, quarter_turn):
+        # Position-mode base goals are relative. Use two increments to avoid wrapping at pi.
+        self.start_gesture_action(
+            stage, ["rotate_mobile_base"], [[quarter_turn], [quarter_turn]], velocity=0.35
+        )
 
-        # Consume the confirmation immediately.
-        self.armed = False
-        self.finished = True
-
+    def start_gesture_action(self, stage, joints, positions, velocity=None):
         if not self.enabled:
-            self.waiting_for_release = self.enable_release
-            self.get_logger().info(
-                "DRY RUN: Thumb_Up received; "
-                "WOULD CLOSE GRIPPER. No motion sent."
-            )
+            message = {
+                "CLOSE": "Thumb_Up received; WOULD CLOSE GRIPPER.",
+                "RELEASE": "Thumb_Down received; WOULD OPEN GRIPPER.",
+            }.get(stage, f"WOULD EXECUTE {stage}.")
+            self.get_logger().info(f"DRY RUN: {message} No motion sent.")
+            self.complete_stage(stage)
             return
 
         if not self.client.server_is_ready():
-            self.get_logger().error(
-                "Stretch action server unavailable. "
-                "No motion sent."
+            self.get_logger().error(f"Stretch action server unavailable. No {stage} sent.")
+            return
+
+        if velocity is not None:
+            # A partial turn has an unknown heading. Prevent follow-up gestures until reset.
+            self.state = PickupState.TURN_UNCONFIRMED
+        elif stage == "CLOSE":
+            self.state = PickupState.COMPLETE
+        self.send_trajectory(stage, joints, positions, velocity=velocity)
+
+    def complete_stage(self, stage):
+        if stage == "READY":
+            self.state = PickupState.READY
+            message = "Pickup ready. Waiting for Thumb_Up."
+        elif stage == "CLOSE":
+            self.state = PickupState.HOLDING
+            message = "PICKUP CLOSE SUCCEEDED."
+            if self.delivery_demo:
+                message += " Waiting for Victory to turn or Thumb_Down to release."
+            elif self.enable_release:
+                message += " Waiting for Thumb_Down to release."
+        elif stage == "RELEASE":
+            self.state = PickupState.READY if self.delivery_demo else PickupState.COMPLETE
+            message = "PICKUP RELEASE SUCCEEDED."
+            if self.delivery_demo:
+                message += " Waiting for Thumb_Up to pick up again."
+        elif stage == "TURN_TO_RECIPIENT":
+            self.state = PickupState.AT_RECIPIENT
+            message = "At recipient. Waiting for OK_Sign or Crossed_Arms."
+        else:
+            self.state = PickupState.COMPLETE
+            message = (
+                "Handoff complete. Gripper opened." if stage == "HANDOFF"
+                else "Return turn complete. Gripper remains closed."
             )
-            return
+        prefix = "" if self.enabled else "DRY RUN: "
+        self.get_logger().info(prefix + message)
 
-        self.send_trajectory("CLOSE", [self.joint_name], [[self.close_position]])
-
-    def on_release(self):
-        if not self.enable_release or self.busy or not self.waiting_for_release:
-            return
-        if not self.enabled:
-            self.waiting_for_release = False
-            self.get_logger().info("DRY RUN: Thumb_Down received; WOULD OPEN GRIPPER.")
-            return
-        if not self.client.server_is_ready():
-            self.get_logger().error("Stretch action server unavailable. No release sent.")
-            return
-        self.send_trajectory("RELEASE", [self.joint_name], [[self.release_position]])
-
-    def send_trajectory(self, stage, joints, positions):
+    def send_trajectory(self, stage, joints, positions, velocity=None):
 
         goal = FollowJointTrajectory.Goal()
 
         goal.trajectory.joint_names = joints
 
+        duration = self.duration if velocity is None else 8.0
         for index, target in enumerate(positions, start=1):
             point = JointTrajectoryPoint()
             point.positions = target
-            seconds, remainder = divmod(round(index * self.duration * 1_000_000_000), 1_000_000_000)
+            if velocity is not None:
+                point.velocities = [velocity]
+            seconds, remainder = divmod(round(index * duration * 1_000_000_000), 1_000_000_000)
             point.time_from_start.sec = seconds
             point.time_from_start.nanosec = remainder
             goal.trajectory.points.append(point)
@@ -353,18 +394,7 @@ class PickupController(Node):
             )
 
             if success:
-                if stage == "READY":
-                    self.armed = True
-                    self.get_logger().info("Pickup ready. Waiting for Thumb_Up.")
-                elif stage == "CLOSE":
-                    self.waiting_for_release = self.enable_release
-                    self.get_logger().info("PICKUP CLOSE SUCCEEDED.")
-                    if self.waiting_for_release:
-                        self.get_logger().info("Waiting for Thumb_Down to release.")
-                else:
-                    self.waiting_for_release = False
-                    self.get_logger().info("PICKUP RELEASE SUCCEEDED.")
-
+                self.complete_stage(stage)
             else:
                 self.get_logger().error(
                     f"PICKUP {stage} FAILED: "

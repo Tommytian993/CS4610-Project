@@ -71,6 +71,25 @@ def image_to_rgb(msg, rotate_clockwise):
     return np.ascontiguousarray(rgb)
 
 
+def is_ok_sign(landmarks):
+    """Find the thumb-index ring and the three extended fingers."""
+    points = np.array([(point.x, point.y, point.z) for point in landmarks])
+    palm_width = np.linalg.norm(points[5] - points[17])
+    if palm_width <= 0 or np.linalg.norm(points[4] - points[8]) > 0.28 * palm_width:
+        return False
+
+    def finger_is_extended(mcp, pip, tip):
+        lower = points[pip] - points[mcp]
+        upper = points[tip] - points[pip]
+        length = np.linalg.norm(lower) * np.linalg.norm(upper)
+        return length > 0 and np.dot(lower, upper) > 0.82 * length
+
+    return not finger_is_extended(5, 6, 8) and all(
+        finger_is_extended(mcp, pip, tip)
+        for mcp, pip, tip in ((9, 10, 12), (13, 14, 16), (17, 18, 20))
+    )
+
+
 class HandoverGestureNode(Node):
 
     def __init__(self):
@@ -90,6 +109,7 @@ class HandoverGestureNode(Node):
         self.declare_parameter("show_preview", False)
         self.declare_parameter("thumb_up_score", THUMB_UP_SCORE)
         self.declare_parameter("enable_thumb_down", False)
+        self.declare_parameter("enable_delivery_demo", False)
 
         self.image_topic = self.get_parameter(
             "image_topic"
@@ -111,9 +131,12 @@ class HandoverGestureNode(Node):
         if not 0.0 < self.thumb_up_score <= 1.0:
             raise ValueError("thumb_up_score must be greater than 0 and at most 1")
 
+        self.delivery_demo = self.get_parameter("enable_delivery_demo").value
         self.gesture_thresholds = {"Thumb_Up": self.thumb_up_score}
-        if self.get_parameter("enable_thumb_down").value:
+        if self.get_parameter("enable_thumb_down").value or self.delivery_demo:
             self.gesture_thresholds["Thumb_Down"] = self.thumb_up_score
+        if self.delivery_demo:
+            self.gesture_thresholds["Victory"] = self.thumb_up_score
 
         self.latest_frame = None
         self.last_frame_time = None
@@ -213,12 +236,17 @@ class HandoverGestureNode(Node):
             if categories
         ]
 
-        candidates = {
-            gesture.category_name
-            for gesture in top_gestures
-            if gesture.category_name in self.gesture_thresholds
-            and gesture.score >= self.gesture_thresholds[gesture.category_name]
-        }
+        candidates = set()
+        for index, categories in enumerate(result.gestures):
+            if self.delivery_demo and index < len(result.hand_world_landmarks):
+                if is_ok_sign(result.hand_world_landmarks[index]):
+                    candidates.add("OK_Sign")
+                    continue
+            if categories:
+                gesture = categories[0]
+                threshold = self.gesture_thresholds.get(gesture.category_name)
+                if threshold is not None and gesture.score >= threshold:
+                    candidates.add(gesture.category_name)
         gesture = next(iter(candidates)) if len(candidates) == 1 else None
         if gesture != self.active_gesture:
             self.active_gesture = gesture
@@ -227,6 +255,8 @@ class HandoverGestureNode(Node):
 
         if gesture is None:
             label = "thumbs-up or thumbs-down" if "Thumb_Down" in self.gesture_thresholds else "thumbs-up"
+            if self.delivery_demo:
+                label += ", Victory or OK"
             status = f"Show {label} (min score {self.thumb_up_score:.2f})"
         else:
             if self.gesture_since is None:

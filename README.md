@@ -207,3 +207,36 @@ The thumbs-up detector publishes `Thumb_Up` on
 `/delivery/handover_gesture`. A thumbs-up received before the ready action
 succeeds is ignored. If a command is rejected or times out, check the
 controller and driver terminals or their logs under `~/.ros/log`.
+
+## Three-gesture delivery demo on Stretch
+
+Start the camera and the two gesture detector commands in the hardware section
+above. Append `-p enable_delivery_demo:=true` to both the `hand_raise` and
+`handover_gesture` commands, after `--ros-args`. Keep the same camera topic,
+rotation setting, and model. Show the 👌 ring with the middle, ring and pinky
+fingers extended. For rejection, form a visible X across the chest with both
+elbows and wrists in frame. Hold each gesture for about one second.
+
+First start the controller with motion disabled:
+
+```bash
+ros2 run study_delivery pickup_controller --ros-args \
+  -p hand_raise_mode:=true -p enable_delivery_demo:=true -p enable_motion:=false
+```
+
+Verify both paths in separate runs:
+
+1. Raise a hand, give 👍, then give ✌️ after the close succeeds. Give 👌 after
+   the controller reports it is at the recipient.
+2. Raise a hand, give 👍, then 👎 to open the gripper and 👍 to pick up again.
+   Give ✌️, wait for the turn to finish, then cross both forearms to return.
+
+For a live test, stop the dry-run controller. Check that the homed driver is in
+`position` mode with `ros2 topic echo /mode --once` and leave room for the arm
+to sweep as the base turns. Run the live controller command from the previous
+section with the same calibrated pickup arguments, plus
+`-p enable_delivery_demo:=true` and `-p release_position:=OPEN_RAD`. Replace
+`OPEN_RAD` with your verified open-gripper angle in radians. The demo uses this
+angle for both 👎 and 👌. The first turn is approximately 180 degrees in place.
+The return turn reverses that heading change while leaving the gripper closed.
+Restart the controller after handoff or return to start another demo.
