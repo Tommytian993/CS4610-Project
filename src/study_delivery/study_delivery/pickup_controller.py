@@ -24,6 +24,7 @@ class PickupState(Enum):
     HOLDING = auto()
     AT_RECIPIENT = auto()
     COMPLETE = auto()
+    HANDOFF_COMPLETE = auto()
     TURN_UNCONFIRMED = auto()
 
 
@@ -236,6 +237,19 @@ class PickupController(Node):
         """Handle a confirmed gesture event."""
 
         gesture = message.data
+        if gesture == "OK_Sign" and self.delivery_demo:
+            if self.busy:
+                self.get_logger().info("OK detected. Wait for the current motion to finish.")
+            elif self.state == PickupState.AT_RECIPIENT:
+                self.start_gesture_action(
+                    "HANDOFF", [self.joint_name], [[self.release_position]]
+                )
+            elif self.state == PickupState.HANDOFF_COMPLETE:
+                self.get_logger().info("OK detected. Handoff already complete.")
+            else:
+                self.get_logger().info("OK detected. The controller is not waiting for an OK.")
+            return
+
         if self.busy:
             return
 
@@ -246,18 +260,13 @@ class PickupController(Node):
         elif self.delivery_demo:
             if gesture == "Victory" and self.state == PickupState.HOLDING:
                 self.start_turn("TURN_TO_RECIPIENT", math.pi / 2)
-            elif self.state == PickupState.AT_RECIPIENT:
-                if gesture == "OK_Sign":
-                    self.start_gesture_action(
-                        "HANDOFF", [self.joint_name], [[self.release_position]]
-                    )
-                elif gesture == "Crossed_Arms":
-                    self.start_turn("TURN_BACK", -math.pi / 2)
+            elif gesture == "Crossed_Arms" and self.state == PickupState.AT_RECIPIENT:
+                self.start_turn("TURN_BACK", -math.pi / 2)
 
     def start_turn(self, stage, quarter_turn):
         # Position-mode base goals are relative. Use two increments to avoid wrapping at pi.
         self.start_gesture_action(
-            stage, ["rotate_mobile_base"], [[quarter_turn], [quarter_turn]], velocity=0.35
+            stage, ["rotate_mobile_base"], [[quarter_turn], [quarter_turn]], velocity=0.30
         )
 
     def start_gesture_action(self, stage, joints, positions, velocity=None):
@@ -300,12 +309,12 @@ class PickupController(Node):
         elif stage == "TURN_TO_RECIPIENT":
             self.state = PickupState.AT_RECIPIENT
             message = "At recipient. Waiting for OK_Sign or Crossed_Arms."
+        elif stage == "HANDOFF":
+            self.state = PickupState.HANDOFF_COMPLETE
+            message = "Handoff complete. Gripper opened."
         else:
             self.state = PickupState.COMPLETE
-            message = (
-                "Handoff complete. Gripper opened." if stage == "HANDOFF"
-                else "Return turn complete. Gripper remains closed."
-            )
+            message = "Return turn complete. Gripper remains closed."
         prefix = "" if self.enabled else "DRY RUN: "
         self.get_logger().info(prefix + message)
 
